@@ -1,36 +1,64 @@
-# This is a basic workflow to help you get started with Actions
+name: 构建 Windows 安装包
 
-name: CI
+# 用途：推送 tag 或手动触发时，用 GitHub 的 Windows 机器自动打包，
+# 产物在 Actions 页面直接下载。这样你本机完全不用装打包环境。
+#
+# 触发方式：
+#   1) 打 tag：git tag v0.1.0 && git push origin v0.1.0
+#   2) 手动：GitHub 仓库 → Actions → 构建 Windows 安装包 → Run workflow
 
-# Controls when the workflow will run
 on:
-  # Triggers the workflow on push or pull request events but only for the "main" branch
   push:
-    branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
-
-  # Allows you to run this workflow manually from the Actions tab
+    tags:
+      - 'v*'
   workflow_dispatch:
 
-# A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
-  # This workflow contains a single job called "build"
-  build:
-    # The type of runner that the job will run on
-    runs-on: ubuntu-latest
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
 
-    # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
-      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
-      - uses: actions/checkout@v4
+      - name: 检出代码
+        uses: actions/checkout@v4
 
-      # Runs a single command using the runners shell
-      - name: Run a one-line script
-        run: echo Hello, world!
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
 
-      # Runs a set of commands using the runners shell
-      - name: Run a multi-line script
-        run: |
-          echo Add other actions to build,
-          echo test, and deploy your project.
+      - name: 安装依赖
+        run: npm install
+        env:
+          # 国内镜像兜底；GitHub 机器走官方源也很快，这里只是保险
+          ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
+          ELECTRON_BUILDER_BINARIES_MIRROR: https://npmmirror.com/mirrors/electron-builder-binaries/
+
+      - name: 生成图标
+        run: python scripts/make-icon.py
+        continue-on-error: true
+
+      - name: 运行自测
+        run: npm test
+
+      - name: 打包（安装版 + 便携版）
+        run: npm run dist:win
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: ScholarDesk-Windows-x64
+          path: |
+            dist/*.exe
+          if-no-files-found: error
+
+      - name: 随 Release 发布
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
